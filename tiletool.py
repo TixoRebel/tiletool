@@ -11,6 +11,8 @@ import argparse
 from pathlib import Path
 from functools import partial
 from enum import Enum
+from typing import cast
+from collections import OrderedDict
 
 @dataclass(frozen=True)
 class TileInfo:
@@ -97,7 +99,7 @@ def load_validate_image(path: str) -> tuple[Image.Image, Palette]:
     if img.mode != 'P':
         raise TiletoolException(f"source image in indexed/palette mode")
 
-    palette = img.getpalette()
+    palette = img.getpalette("RGB")
 
     if not palette:
         raise TiletoolException(f"source image does not contain a palette")
@@ -187,6 +189,55 @@ def handle_create(parser: argparse.ArgumentParser, args):
     except TiletoolException as e:
         parser.error(str(e))
 
+def handle_palette(parser: argparse.ArgumentParser, args):
+    try:
+        if not args.input_image.exists():
+            parser.error(f"source image '{args.input_image.absolute()}' does not exist")
+
+        img, palette = load_validate_image(args.input_image)
+
+        if args.squash:
+            for i in range(len(palette)):
+                palette[i] = palette[i] & 0xF8
+
+            if args.dither:
+                pal_img = Image.new("P", (1, 1), color=0)
+                pal_img.putpalette(palette)
+                img = img.convert("RGB").quantize(palette=pal_img, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.FLOYDSTEINBERG)
+            else:
+                img.putpalette(palette)
+        elif args.dither:
+            parser.error("dither has no effect unless squash is also passed")
+
+        if args.reduce:
+            palette_colors = [tuple(palette[i:i+3]) for i in range(0, len(palette), 3)]
+            seen = OrderedDict()
+            pal_map = [-1 for i in range(len(palette_colors))]
+            added = 0
+            for i, color in enumerate(palette_colors):
+                map_idx = seen.get(color, -1)
+                if map_idx == -1:
+                    seen[color] = added
+                    pal_map[i] = added
+                    added += 1
+                else:
+                    pal_map[i] = map_idx
+
+            pixels = img.load()
+            if not pixels:
+                parser.error("could not load image data")
+            for y in range(img.height):
+                for x in range(img.width):
+                    pixels[x, y] = pal_map[cast(int, pixels[x, y])]
+
+            palette = [color for rgb in seen.keys() for color in rgb]
+            img.putpalette(palette)
+
+        img.save(args.output_image)
+
+    except TiletoolException as e:
+        parser.error(str(e))
+
 def main():
     parser = argparse.ArgumentParser(description="A tool for creating GBA tilemaps and tilesets.")
 
@@ -201,6 +252,14 @@ def main():
     parser_create.add_argument("-p", "--palette", type=lambda x: int(x, 0), help="The palette to use (defaults to 0 if not specified).", metavar="tilemap format")
     parser_create.add_argument("-s", "--offset", type=lambda x: int(x, 0), help="The offset at which the tiles will be loaded to in game.", metavar="offset")
     parser_create.set_defaults(func=partial(handle_create, parser=parser_create))
+
+    parser_palette = subparsers.add_parser("palette", help="Modify the palette of an image.")
+    parser_palette.add_argument("input_image", type=Path, help="The image to modify.", metavar="input image")
+    parser_palette.add_argument("output_image", type=Path, help="The modified image.", metavar="output image")
+    parser_palette.add_argument("-s", "--squash", action="store_true", help="Squash the image down to RGB555 for the GBA.")
+    parser_palette.add_argument("-d", "--dither", action="store_true", help="Dither the image using Floyd-Steinberg dithering.")
+    parser_palette.add_argument("-r", "--reduce", action="store_true", help="Remove duplicate palette entries.")
+    parser_palette.set_defaults(func=partial(handle_palette, parser=parser_palette))
 
     args = parser.parse_args()
 
