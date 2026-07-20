@@ -106,6 +106,14 @@ def load_validate_image(path: str) -> tuple[Image.Image, Palette]:
 
     return (img, palette)
 
+def load_validate_image_no_pal(path: str) -> Image.Image:
+    img = Image.open(path)
+
+    if img.width % 8 != 0 or img.height % 8 != 0:
+        raise TiletoolException(f"source image is not a multiple of 8 pixels wide / tall ({img.width}, {img.height})")
+    
+    return img
+
 def load_tileset(path) -> tuple[TileDict, Tileset]:
     tiles_dict = dict()
     tileset_list = []
@@ -194,8 +202,15 @@ def handle_palette(parser: argparse.ArgumentParser, args):
         if not args.input_image.exists():
             parser.error(f"source image '{args.input_image.absolute()}' does not exist")
 
-        img, palette = load_validate_image(args.input_image)
+        img = load_validate_image_no_pal(args.input_image)
+        if img.mode != 'P':
+            img = img.convert("RGB").quantize(method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        
+        palette = img.getpalette("RGB")
 
+        if not palette:
+            raise TiletoolException(f"could not get palette from source image")
+    
         if args.squash:
             for i in range(len(palette)):
                 palette[i] = palette[i] & 0xF8
