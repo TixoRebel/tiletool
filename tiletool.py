@@ -4,7 +4,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-from PIL import Image, ImageChops
+import PIL
+from PIL import Image, ImageChops, features
 import hashlib
 from dataclasses import dataclass
 import argparse
@@ -202,15 +203,20 @@ def handle_palette(parser: argparse.ArgumentParser, args):
         if not args.input_image.exists():
             parser.error(f"source image '{args.input_image.absolute()}' does not exist")
 
+        if args.colors != None and args.colors < 1:
+            parser.error("the number of colors must be one or more")
+
+        quant_method = Image.Quantize.LIBIMAGEQUANT if features.check_feature("libimagequant") else Image.Quantize.MEDIANCUT
+
         img = load_validate_image_no_pal(args.input_image)
         if img.mode != 'P':
-            img = img.convert("RGB").quantize(method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+            img = img.convert("RGB").quantize(method=quant_method, dither=Image.Dither.NONE)
         
         palette = img.getpalette("RGB")
 
         if not palette:
             raise TiletoolException(f"could not get palette from source image")
-    
+
         if args.squash:
             for i in range(len(palette)):
                 palette[i] = palette[i] & 0xF8
@@ -218,11 +224,11 @@ def handle_palette(parser: argparse.ArgumentParser, args):
             if args.dither:
                 pal_img = Image.new("P", (1, 1), color=0)
                 pal_img.putpalette(palette)
-                img = img.convert("RGB").quantize(palette=pal_img, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.FLOYDSTEINBERG)
+                img = img.convert("RGB").quantize(palette=pal_img, method=quant_method, dither=Image.Dither.FLOYDSTEINBERG)
             else:
                 img.putpalette(palette)
         elif args.dither:
-            parser.error("dither has no effect unless squash is also passed")
+            parser.error("dither has no effect unless squash is also used")
 
         if args.reduce:
             palette_colors = [tuple(palette[i:i+3]) for i in range(0, len(palette), 3)]
@@ -247,6 +253,9 @@ def handle_palette(parser: argparse.ArgumentParser, args):
 
             palette = [color for rgb in seen.keys() for color in rgb]
             img.putpalette(palette)
+        
+        if args.colors != None:
+            img = img.convert("RGB").quantize(colors=args.colors, method=quant_method, dither=(Image.Dither.FLOYDSTEINBERG if args.dither else Image.Dither.NONE))
 
         img.save(args.output_image)
 
@@ -274,6 +283,7 @@ def main():
     parser_palette.add_argument("-s", "--squash", action="store_true", help="Squash the image down to RGB555 for the GBA.")
     parser_palette.add_argument("-d", "--dither", action="store_true", help="Dither the image using Floyd-Steinberg dithering.")
     parser_palette.add_argument("-r", "--reduce", action="store_true", help="Remove duplicate palette entries.")
+    parser_palette.add_argument("-c", "--colors", type=int, help="Reduce the color space to the specified number of colors.")
     parser_palette.set_defaults(func=partial(handle_palette, parser=parser_palette))
 
     args = parser.parse_args()
