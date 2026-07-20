@@ -217,6 +217,10 @@ def handle_palette(parser: argparse.ArgumentParser, args):
         if not palette:
             raise TiletoolException(f"could not get palette from source image")
 
+        if args.colors != None:
+            img = img.convert("RGB").quantize(colors=args.colors, method=quant_method, dither=(Image.Dither.FLOYDSTEINBERG if args.dither else Image.Dither.NONE))
+            palette = cast(Palette, img.getpalette())
+
         if args.squash:
             for i in range(len(palette)):
                 palette[i] = palette[i] & 0xF8
@@ -227,8 +231,6 @@ def handle_palette(parser: argparse.ArgumentParser, args):
                 img = img.convert("RGB").quantize(palette=pal_img, method=quant_method, dither=Image.Dither.FLOYDSTEINBERG)
             else:
                 img.putpalette(palette)
-        elif args.dither:
-            parser.error("dither has no effect unless squash is also used")
 
         if args.reduce:
             palette_colors = [tuple(palette[i:i+3]) for i in range(0, len(palette), 3)]
@@ -253,9 +255,6 @@ def handle_palette(parser: argparse.ArgumentParser, args):
 
             palette = [color for rgb in seen.keys() for color in rgb]
             img.putpalette(palette)
-        
-        if args.colors != None:
-            img = img.convert("RGB").quantize(colors=args.colors, method=quant_method, dither=(Image.Dither.FLOYDSTEINBERG if args.dither else Image.Dither.NONE))
 
         img.save(args.output_image)
 
